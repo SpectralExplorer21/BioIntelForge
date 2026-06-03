@@ -1,0 +1,498 @@
+{
+  "name": "BioIntelForge",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 19,
+              "triggerAtMinute": null
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -16,
+        176
+      ],
+      "id": "32a6b2db-fc68-4f57-9a99-6de428a595ff",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "db",
+              "value": "pubmed"
+            },
+            {
+              "name": "term",
+              "value": "((synthetic biology) OR CRISPR OR \"gene therapy\" OR biopharma) AND (deliver* OR vector OR editing OR therapeutics)"
+            },
+            {
+              "name": "retmax",
+              "value": "1"
+            },
+            {
+              "name": "retmode",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c674ac2c-8195-4e12-ad57-5b5933dd1aa1",
+      "name": "PubMed: esearch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        320,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "db",
+              "value": "pubmed"
+            },
+            {
+              "name": "id",
+              "value": "={{ $json.esearchresult ? $json.esearchresult.idlist.join(',') : ($json.idlist ? $json.idlist.join(',') : '') }}"
+            },
+            {
+              "name": "retmode",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "97a2484f-ea56-4330-8a88-59c0a3dd1a5c",
+      "name": "PubMed: esummary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        592,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://export.arxiv.org/rss/q-bio",
+        "options": {}
+      },
+      "id": "a40977d1-4809-4da3-9ec3-f744f044a7fb",
+      "name": "ArXiv RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        464,
+        368
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "04571d6a-d4bd-4c9e-8d7b-0868c46fd274",
+      "name": "Merge Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1056,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Relevance prefilter: simple keyword scoring, then pick top N (5) */\nconst KEYWORDS = ['crispr','gene therapy','synthetic biology','delivery','deliver','vector','therapeutic','therapeutics','cell therapy','gene editing','gene-editing'];\nconst scored = items.map(i=>{\n  const title = (i.json.title||'').toString().toLowerCase();\n  const abstract = (i.json.abstract||'').toString().toLowerCase();\n  let score = 0;\n  for (const kw of KEYWORDS) {\n    if (title.includes(kw)) score += 3;\n    if (abstract.includes(kw)) score += 2;\n  }\n  // boost shorter titles + non-empty abstract\n  if ((abstract||'').length > 200) score += 1;\n  score += Math.min(2, (title.length>0)?1:0);\n  return {score, json: i.json};\n});\nscored.sort((a,b)=>b.score - a.score);\nconst limit = 5;\nreturn scored.slice(0, limit).map(s=>({json: {...s.json, prefilter_score: s.score}}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        128
+      ],
+      "id": "3123d227-a400-4ba5-82a5-ea214bc2ad7c",
+      "name": "Relevance Prefilter"
+    },
+    {
+      "parameters": {
+        "batchSize": 4,
+        "options": {}
+      },
+      "id": "7ee92e93-41f8-4cd9-8169-a5f7c3fb757c",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Enhanced Robust JSON extraction with error logging */\nconst response = $input.first().json;\nlet content = '';\nif (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.content) {\n  content = response.choices[0].message.content;\n} else if (response.error) {\n  return [{ json: { error: 'OpenAI API Error', details: response.error } }];\n} else {\n  content = '{}';\n}\ntry {\n  const parsed = JSON.parse(content);\n  return [{ json: parsed }];\n} catch (e) {\n  const m = content.match(/\\{[\\s\\S]*\\}/);\n  if (m) {\n    try { return [{ json: JSON.parse(m[0]) }]; } catch(err) { return [{ json: { error: 'JSON parse failed', rawContent: content, parseError: err.message } }]; }\n  }\n  return [{ json: { error: 'JSON parse failed', rawContent: content, parseError: e.message } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        -160
+      ],
+      "id": "eb87c0e5-6821-4683-8a37-f6b5f472ac7c",
+      "name": "Extract & Diagnose JSON"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "title",
+              "value": "={{$json.title || $json.title}}"
+            },
+            {
+              "name": "authors",
+              "value": "={{$json.authors || $json.authors}}"
+            },
+            {
+              "name": "domain",
+              "value": "={{$json.domain || ''}}"
+            },
+            {
+              "name": "summary",
+              "value": "={{$json.summary || ''}}"
+            },
+            {
+              "name": "biological_mechanism",
+              "value": "={{$json.biological_mechanism || ''}}"
+            },
+            {
+              "name": "applications",
+              "value": "={{$json.applications || ''}}"
+            },
+            {
+              "name": "TRL_level",
+              "value": "={{$json.TRL_level || ''}}"
+            },
+            {
+              "name": "commercial_potential",
+              "value": "={{$json.commercial_potential || ''}}"
+            },
+            {
+              "name": "industry_relevance",
+              "value": "={{$json.industry_relevance || ''}}"
+            }
+          ],
+          "number": [
+            {
+              "name": "relevance_score",
+              "value": "={{Number($json.relevance_score) || 0}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8457e8fc-ec19-4c3f-8b11-79e7c70fab98",
+      "name": "Set Final Record",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        2752,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Aggregate items back into a single email body */\nconst lines = [];\nfor (const it of items) {\n  const j = it.json;\n  lines.push(`Title: ${j.title || 'Untitled'}\\nAuthors: ${j.authors || 'Unknown'}\\nRelevance score: ${j.relevance_score || 0}\\nURL: ${j.url || 'No URL'}\\nSummary: ${j.summary || (j.abstract || '').slice(0,300)}\\n---`);\n}\nconst body = lines.join('\\n\\n');\nreturn [{ json: { emailBody: `New papers from BioIntel run (top ${items.length}):\\n\\n${body}` } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        144
+      ],
+      "id": "a4e3d8a7-ed3d-4b74-9b9d-00111d24f87e",
+      "name": "Aggregate for Email"
+    },
+    {
+      "parameters": {
+        "fromEmail": "Your_gmail",
+        "toEmail": "Your_gmail",
+        "subject": "BioIntel – New Research Notification (top 5)",
+        "emailFormat": "text",
+        "text": "={{$json.emailBody}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3072,
+        144
+      ],
+      "id": "7f7f5598-070f-4aac-965b-16ac2af1b944",
+      "name": "Send email",
+      "webhookId": "e6c0617e-7253-4522-97b6-7ea372be0d2e",
+      "credentials": {
+        "smtp": {
+          "id": "vNSRbfElKRnifEGt",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "{\n  \"parameters\": []\n}\n\n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Return ONLY valid JSON: {\\\"title\\\":\\\"string\\\",\\\"authors\\\":\\\"string\\\",\\\"domain\\\":\\\"string\\\",\\\"summary\\\":\\\"string\\\",\\\"biological_mechanism\\\":\\\"string\\\",\\\"applications\\\":\\\"string\\\",\\\"TRL_level\\\":7,\\\"commercial_potential\\\":\\\"string\\\",\\\"industry_relevance\\\":\\\"string\\\",\\\"relevance_score\\\":8.5}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Title: {{$json.title}} Authors: {{$json.authors}} Abstract: {{$json.abstract}} Source: {{$json.source}}\"\n    }\n  ],\n  \"temperature\": 0,\n  \"max_tokens\": 500\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        128
+      ],
+      "id": "27fea3ad-e086-481b-bcc0-63b95170c72e",
+      "name": "groq"
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Normalize merged items to a unified shape */\nconst out = [];\nfor (const item of items) {\n  // PubMed esummary results come as esummaryresult -> result -> uid keyed objects\n  if (item.json.result) {\n    for (const key of Object.keys(item.json.result)) {\n      if (key === 'uids') continue;\n      const r = item.json.result[key];\n      out.push({\n        json: {\n          title: r.title || r.Title || '',\n          authors: (r.authors && r.authors.map(a => a.name).join(', ')) || r.authors || '',\n          abstract: r.elocationid || r.title || '',\n          source: 'PubMed',\n          url: r.uid ? `https://pubmed.ncbi.nlm.nih.gov/${r.uid}/` : ''\n        }\n      });\n    }\n    continue;\n  }\n\n  // Generic handlers\n  if (item.json && item.json.rss && item.json.rss.channel && item.json.rss.channel.item) {\n    const itemsArr = item.json.rss.channel.item;\n    const feed = Array.isArray(itemsArr) ? itemsArr : [itemsArr];\n    for (const r of feed) {\n      out.push({json: {\n        title: r.title || '',\n        authors: r['dc:creator'] || '',\n        abstract: r.description || '',\n        source: 'ArXiv',\n        url: r.link || ''\n      }});\n    }\n    continue;\n  }\n\n  if (item.json.title) {\n    out.push({json: {\n      title: item.json.title,\n      authors: item.json.authors || '',\n      abstract: item.json.abstract || item.json.summary || '',\n      source: item.json.source || 'Unknown',\n      url: item.json.url || ''\n    }});\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        192
+      ],
+      "id": "94790230-4446-4e2e-adbd-c6076d1c1cad",
+      "name": "normalize"
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Remove duplicates by title+authors+url (case-insensitive) */\nconst map = new Map();\nfor (const it of items) {\n  const t = (it.json.title || '').toString().trim().toLowerCase();\n  const a = (it.json.authors || '').toString().trim().toLowerCase();\n  const u = (it.json.url || '').toString().trim().toLowerCase();\n  const key = `${t}||${a}||${u}`;\n  if (!map.has(key)) map.set(key, it);\n}\nreturn Array.from(map.values());"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        224
+      ],
+      "id": "a24e418c-123b-4b41-9318-f803051f10fe",
+      "name": "deduplicator"
+    },
+    {
+      "parameters": {
+        "jsCode": "/* Parse response object into fields and ensure authors string */\nconst out = [];\nfor (const it of items) {\n  let parsed = it.json || {};\n  // Normalize minimal fields\n  parsed.title = parsed.title || $input.all()[0].json.title || '';\n  parsed.authors = parsed.authors ? (Array.isArray(parsed.authors) ? parsed.authors.join(', ') : parsed.authors.toString()) : 'Unknown';\n  parsed.domain = parsed.domain || '';\n  parsed.summary = parsed.summary || '';\n  parsed.biological_mechanism = parsed.biological_mechanism || '';\n  parsed.applications = parsed.applications || '';\n  parsed.TRL_level = parsed.TRL_level || '';\n  parsed.commercial_potential = parsed.commercial_potential || '';\n  parsed.industry_relevance = parsed.industry_relevance || '';\n  parsed.relevance_score = Number(parsed.relevance_score) || Number(parsed.prefilter_score) || 0;\n  out.push({ json: parsed });\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        144
+      ],
+      "id": "8d316606-ffab-4cf6-9697-2bd72daf4220",
+      "name": "response parsing"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "PubMed: esearch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "ArXiv RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PubMed: esearch": {
+      "main": [
+        [
+          {
+            "node": "PubMed: esummary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PubMed: esummary": {
+      "main": [
+        [
+          {
+            "node": "Merge Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ArXiv RSS": {
+      "main": [
+        [
+          {
+            "node": "Merge Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Sources": {
+      "main": [
+        [
+          {
+            "node": "normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Relevance Prefilter": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "groq",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Diagnose JSON": {
+      "main": [
+        [
+          {
+            "node": "response parsing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Final Record": {
+      "main": [
+        [
+          {
+            "node": "Aggregate for Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate for Email": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "groq": {
+      "main": [
+        [
+          {
+            "node": "Extract & Diagnose JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "normalize": {
+      "main": [
+        [
+          {
+            "node": "deduplicator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deduplicator": {
+      "main": [
+        [
+          {
+            "node": "Relevance Prefilter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "response parsing": {
+      "main": [
+        [
+          {
+            "node": "Set Final Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "53734a92-3e23-43f6-90d7-ea1c86e40ed5",
+  "meta": {
+    "instanceId": "ddd5acdc9ab601d5f48ad3ba11ac70effc770eec9a5c94c543ec7e3c9b54f795"
+  },
+  "id": "sH2uWsMdEpcssQ7L",
+  "tags": []
+}
